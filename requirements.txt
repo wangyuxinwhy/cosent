@@ -1,4 +1,5 @@
 transformers
 torchmetrics
 accelerate
-typer
+typer[all]
+tensorboard

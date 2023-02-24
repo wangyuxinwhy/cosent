@@ -49,10 +49,10 @@ class CoSentDataset(Dataset):
     def __init__(self, data_file: str | Path) -> None:
         self.data_file = Path(data_file)
         self.data = []
-        for record in read_from_csv(self.data_file, delimiter='\t', names=['text', 'text_pair', 'similarity']):
+        for record in read_from_csv(self.data_file, delimiter='\t', names=['text', 'text_pair', 'similarities']):
             self.data.append(
                 TextPairSimilarityDict(
-                    text=record['text'], text_pair=record['text_pair'], similarity=float(record['similarity'])
+                    text=record['text'], text_pair=record['text_pair'], similarity=float(record['similarities'])
                 )
             )
 

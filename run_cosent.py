@@ -1,9 +1,23 @@
+from __future__ import annotations
+
+import os
+
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-import tqdm
 import typer
+from accelerate import Accelerator
+from accelerate.utils.random import set_seed
+from torch.optim import Adam
+from torch.utils.data import DataLoader
+from torchmetrics.regression import SpearmanCorrCoef
+from transformers import AutoTokenizer
+
+from cosent.data import CoSentCollator, CoSentDataset
+from cosent.model import CoSentModel
+from cosent.trainer import MetricModuleUpdateArgs, MetricStrategy, Trainer, evaluate
 
 
 class CoSentDatasetType(str, Enum):
@@ -12,11 +26,6 @@ class CoSentDatasetType(str, Enum):
     LCQMC = 'LCQMC'
     PAWSX = 'PAWSX'
     STSB = 'STS-B'
-
-
-def build_progress_bar(current_epoch: int, epochs: int, total_batches: int):
-    progress_bar = tqdm.tqdm(total=total_batches, desc='Epoch {current_epoch}/{epochs}', unit='bat')
-    return progress_bar
 
 
 def main(
@@ -33,26 +42,14 @@ def main(
     lr: float = 2e-5,
     mixed_precision: str = 'bf16',
     gradient_accumulation_steps: int = 1,
+    use_tensorboard: bool = False,
 ):
-    import os
-
-    os.environ['TOKENIZERS_PARALLELISM'] = 'false'
-    from accelerate import Accelerator
-    from accelerate.utils.random import set_seed
-    from torch.optim import Adam
-    from torch.utils.data import DataLoader
-    import tqdm
-    from transformers import AutoTokenizer
-
-    from cosent.data import CoSentCollator, CoSentDataset
-    from cosent.model import CoSentModel
 
     dataset_name = dataset_type.value
-    output_dir = output_dir or Path.cwd() / 'runs' / dataset_name
+    output_dir = output_dir or Path('experiments') / dataset_name
 
     set_seed(seed)
 
-    dataset_name = dataset_type.value
     train_dataset = CoSentDataset(dataset_root_dir / dataset_name / f'{dataset_name}.train.data')
     validation_dataset = CoSentDataset(dataset_root_dir / dataset_name / f'{dataset_name}.valid.data')
     test_dataset = CoSentDataset(dataset_root_dir / dataset_name / f'{dataset_name}.test.data')
@@ -73,30 +70,40 @@ def main(
         mixed_precision=mixed_precision,
         gradient_accumulation_steps=gradient_accumulation_steps,
         project_dir=output_dir,
+        log_with=['tensorboard'] if use_tensorboard else None,
+    )
+    accelerator.init_trackers(dataset_name)
+
+    def metric_adapter(batch_output, batch) -> MetricModuleUpdateArgs:
+        return {
+            'preds': batch_output['similarities'],
+            'target': batch['similarities'],
+        }
+
+    metric_strategy = MetricStrategy(
+        metric_module=SpearmanCorrCoef(),
+        metric_adapter=metric_adapter,
     )
 
-    model, optimizer, train_dataloader, validation_dataloader, test_dataloader = accelerator.prepare(
-        model, optimizer, train_dataloader, validation_dataloader, test_dataloader
+    trainer = Trainer(
+        model=model,
+        optimizer=optimizer,
+        train_dataloader=train_dataloader,
+        validation_dataloader=validation_dataloader,
+        accelerator=accelerator,
+        epochs=epochs,
+        metric_strategy=metric_strategy,
     )
-    model.train()
-
-    for current_epoch in range(epochs):
-        avg_loss = 0
-        epoch_description = f'Epoch {current_epoch+1}/{epochs}'
-        progress_bar = tqdm.tqdm(total=len(train_dataloader), unit='bat')
-        for num_batches, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(model):
-                optimizer.zero_grad()
-                model_output = model(**batch)
-                loss = model_output['loss']
-                accelerator.backward(loss)
-                optimizer.step()
-                avg_loss = (avg_loss * num_batches + loss.item()) / (num_batches + 1)
-            progress_bar.update(1)
-            if num_batches % 10 == 0:
-                progress_bar.set_description(epoch_description + f' - loss: {loss:.4f}')
-
-    accelerator.end_training()
+    trainer.train()
+    model.load_state_dict(trainer.best_model_state_dict)
+    test_dataloader = accelerator.prepare(test_dataloader)
+    test_metric = evaluate(
+        model=model,
+        dataloader=test_dataloader,
+        metric_strategy=metric_strategy,
+    )
+    accelerator.log(test_metric)
+    print(test_metric)
 
 
 if __name__ == '__main__':

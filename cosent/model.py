@@ -37,11 +37,11 @@ class CoSentModel(nn.Module):
         text_cls_embeddings = self.encoder(text_ids).last_hidden_state[:, 0, :]
         text_pair_cls_embeddings = self.encoder(text_pair_ids).last_hidden_state[:, 0, :]
 
-        pred_similarity = torch.cosine_similarity(text_cls_embeddings, text_pair_cls_embeddings, dim=1)
-        output = {'similarity': pred_similarity}
+        pred_similarities = torch.cosine_similarity(text_cls_embeddings, text_pair_cls_embeddings, dim=1)
+        output = {'similarities': pred_similarities}
 
         if similarities is not None:
-            loss = self.criterion(pred_similarity, similarities)
+            loss = self.criterion(pred_similarities, similarities)
             output['loss'] = loss
 
         return output
