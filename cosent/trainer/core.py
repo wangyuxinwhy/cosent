@@ -9,9 +9,10 @@ import torch.nn as nn
 import tqdm
 from accelerate import Accelerator
 from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 
-from cosent.trainer.metric_strategy import MetricStrategy
+from cosent.trainer.metric_strategy import MetricModule, MetricStrategy, MetricAdapter
 from cosent.trainer.trackers import BestModelTracker, MetricTracker
 
 
@@ -62,14 +63,16 @@ class Trainer:
         epochs: int,
         metric_strategy: MetricStrategy | None = None,
         log_interval: int = 50,
+        lr_scheduler: LRScheduler | None = None,
     ):
-        model, optimizer, train_dataloader, validation_dataloader = accelerator.prepare(
-            model, optimizer, train_dataloader, validation_dataloader
+        model, optimizer, train_dataloader, validation_dataloader, lr_scheduler = accelerator.prepare(
+            model, optimizer, train_dataloader, validation_dataloader, lr_scheduler
         )
         self.model = model
         self.optimizer = optimizer
         self.train_dataloader = train_dataloader
         self.validation_dataloader = validation_dataloader
+        self.lr_scheduler = lr_scheduler
         self.accelerator = accelerator
         self.metric_log_interval = log_interval
         self.state = TrainerState(epochs=epochs, num_batches_per_epoch=len(train_dataloader))
@@ -92,6 +95,8 @@ class Trainer:
                     loss = batch_output['loss']
                     self.accelerator.backward(loss)
                     self.optimizer.step()
+                    if self.lr_scheduler is not None:
+                        self.lr_scheduler.step()
                     self.train_metric_tracker.update_loss(loss.item())
                     self.train_metric_tracker.update_metric(**self.metric_strategy.metric_adapter(batch, batch_output))
                 self.state.advance_batch()
@@ -138,10 +143,12 @@ class Trainer:
 
 
 def evaluate(
-    model: nn.Module, dataloader: DataLoader, metric_strategy: MetricStrategy | None = None, prefix: str | None = None
+    model: nn.Module, dataloader: DataLoader, metric_module: MetricModule | None, metric_adapter: MetricAdapter | None, prefix: str | None = None
 ):
-    metric_strategy = metric_strategy or MetricStrategy()
-    metric_tracker = MetricTracker(deepcopy(metric_strategy.metric_module) if metric_strategy.metric_module else None)
+    if metric_module is not None and metric_adapter is None:
+        raise ValueError('`metric_adapter` is required when `metric_module` is provided.')
+
+    metric_tracker = MetricTracker(deepcopy(metric_module) if metric_module else None)
 
     model = model.eval()
     for batch in dataloader:
@@ -149,7 +156,8 @@ def evaluate(
             batch_output = model(**batch)
             loss = batch_output['loss']
             metric_tracker.update_loss(loss.item())
-            metric_tracker.update_metric(**metric_strategy.metric_adapter(batch, batch_output))
+            if metric_adapter is not None:
+                metric_tracker.update_metric(**metric_adapter(batch, batch_output))
     metric = metric_tracker.get_metric()
     if prefix:
         metric = add_prefix(metric, prefix)
