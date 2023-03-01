@@ -4,8 +4,8 @@ import torch
 import torch.nn as nn
 from transformers import AutoModel
 
-
-class SimilarityLoss(nn.Module):
+# sujianlin
+class CosineSimilarityLoss(nn.Module):
     bias: torch.Tensor
 
     def __init__(self, alpha: float) -> None:
@@ -13,11 +13,11 @@ class SimilarityLoss(nn.Module):
         self.alpha = alpha
         self.register_buffer('bias', torch.tensor([0.0]))
 
-    def forward(self, pred_similarity: torch.Tensor, true_similarity: torch.Tensor) -> torch.Tensor:
+    def forward(self, predict_similarity: torch.Tensor, true_similarity: torch.Tensor) -> torch.Tensor:
         # cosine_similarity: [batch_size], true_similarity: [batch_size]
-        pred_similarity = pred_similarity * self.alpha
+        predict_similarity = predict_similarity * self.alpha
 
-        cosine_similarity_diff = -(pred_similarity.unsqueeze(0) - pred_similarity.unsqueeze(1))
+        cosine_similarity_diff = -(predict_similarity.unsqueeze(0) - predict_similarity.unsqueeze(1))
         smaller_mask = true_similarity.unsqueeze(0) <= true_similarity.unsqueeze(1)
         cosine_similarity_diff = cosine_similarity_diff.masked_fill(smaller_mask, -1e12)
 
@@ -27,11 +27,54 @@ class SimilarityLoss(nn.Module):
         return loss
 
 
+class SoftRankLoss(nn.Module):
+    bias: torch.Tensor
+
+    def __init__(self, alpha: float) -> None:
+        super().__init__()
+        self.alpha = alpha
+        self.register_buffer('bias', torch.tensor([0.0]))
+
+    def forward(self, predict_scores: torch.Tensor, true_scores: torch.Tensor) -> torch.Tensor:
+        batch_size = predict_scores.size(0)
+
+        predict_scores = predict_scores * self.alpha
+        scores_diff = -(predict_scores.unsqueeze(0) - predict_scores.unsqueeze(1))
+        smaller_mask = true_scores.unsqueeze(0) <= true_scores.unsqueeze(1)
+        num_not_mask_count = (batch_size ** 2 / 2) - batch_size
+
+        scores_diff = scores_diff.masked_fill(smaller_mask, -1e12).view(-1)
+        loss = torch.log((torch.exp(scores_diff) + 1)).sum() / num_not_mask_count
+        return loss
+
+
+# ouyang long
+class SoftRankLoss2(nn.Module):
+    bias: torch.Tensor
+
+    def __init__(self, alpha: float) -> None:
+        super().__init__()
+        self.alpha = alpha
+        self.register_buffer('bias', torch.tensor([0.0]))
+
+    def forward(self, predict_scores: torch.Tensor, true_scores: torch.Tensor) -> torch.Tensor:
+        batch_size = predict_scores.size(0)
+
+        predict_scores = predict_scores * self.alpha
+        scores_diff = -(predict_scores.unsqueeze(0) - predict_scores.unsqueeze(1))
+        smaller_mask = true_scores.unsqueeze(0) <= true_scores.unsqueeze(1)
+        num_not_mask_count = (batch_size ** 2 / 2) - batch_size
+        scores_diff = scores_diff.masked_fill(smaller_mask, -1e12).view(-1)
+        loss = torch.log(torch.sigmoid(-scores_diff)).sum() / num_not_mask_count
+        return loss
+
+
 class CoSentModel(nn.Module):
     def __init__(self, model_name_or_path: str, alpha: float = 20):
         super().__init__()
         self.encoder = AutoModel.from_pretrained(model_name_or_path)
-        self.criterion = SimilarityLoss(alpha)
+        # self.criterion = CosineSimilarityLoss(alpha)
+        self.criterion = SoftRankLoss2(alpha)
 
     def forward(self, text_ids: torch.Tensor, text_pair_ids: torch.Tensor, similarities: torch.Tensor | None = None):
         text_cls_embeddings = self.encoder(text_ids).last_hidden_state[:, 0, :]
