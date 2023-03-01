@@ -53,7 +53,7 @@ class CoSentModel(nn.Module):
         super().__init__()
         self.encoder = AutoModel.from_pretrained(model_name_or_path)
         # self.criterion = CosineSimilarityLoss(alpha)
-        self.criterion = SoftRankLoss2(alpha)
+        self.criterion = SoftRankLoss(alpha)
 
     def forward(self, text_ids: torch.Tensor, text_pair_ids: torch.Tensor, similarities: torch.Tensor | None = None):
         text_cls_embeddings = self.encoder(text_ids).last_hidden_state[:, 0, :]
