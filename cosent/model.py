@@ -65,7 +65,7 @@ class SoftRankLoss2(nn.Module):
         smaller_mask = true_scores.unsqueeze(0) <= true_scores.unsqueeze(1)
         num_not_mask_count = (batch_size ** 2 / 2) - batch_size
         scores_diff = scores_diff.masked_fill(smaller_mask, -1e12).view(-1)
-        loss = torch.log(torch.sigmoid(-scores_diff)).sum() / num_not_mask_count
+        loss = -torch.log(torch.sigmoid(-scores_diff)).sum() / num_not_mask_count
         return loss
 
 
