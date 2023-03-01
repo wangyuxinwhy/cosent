@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from transformers import AutoModel
 
-# sujianlin
+# https://kexue.fm/archives/8847
 class CosineSimilarityLoss(nn.Module):
     bias: torch.Tensor
 
@@ -27,29 +27,8 @@ class CosineSimilarityLoss(nn.Module):
         return loss
 
 
+# https://arxiv.org/pdf/2203.02155.pdf
 class SoftRankLoss(nn.Module):
-    bias: torch.Tensor
-
-    def __init__(self, alpha: float) -> None:
-        super().__init__()
-        self.alpha = alpha
-        self.register_buffer('bias', torch.tensor([0.0]))
-
-    def forward(self, predict_scores: torch.Tensor, true_scores: torch.Tensor) -> torch.Tensor:
-        batch_size = predict_scores.size(0)
-
-        predict_scores = predict_scores * self.alpha
-        scores_diff = -(predict_scores.unsqueeze(0) - predict_scores.unsqueeze(1))
-        smaller_mask = true_scores.unsqueeze(0) <= true_scores.unsqueeze(1)
-        num_not_mask_count = (batch_size ** 2 / 2) - batch_size
-
-        scores_diff = scores_diff.masked_fill(smaller_mask, -1e12).view(-1)
-        loss = torch.log((torch.exp(scores_diff) + 1)).sum() / num_not_mask_count
-        return loss
-
-
-# ouyang long
-class SoftRankLoss2(nn.Module):
     bias: torch.Tensor
 
     def __init__(self, alpha: float) -> None:
